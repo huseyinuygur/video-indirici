@@ -200,10 +200,8 @@ def serve_downloaded_file(session_id):
 
         if os.path.exists(filepath):
             try:
-                # Dosyayı kullanıcıya gönder
-                # as_attachment=True ile dosya indirme olarak sunulur
-                # download_name ile dosyanın kullanıcının bilgisayarında görünecek adı belirlenir
-                return send_file(filepath, as_attachment=True, download_name=original_filename)
+                # Dosyayı tarayıcıya video içeriği olarak gönder (indirme başlatmaz)
+                return send_file(filepath, as_attachment=False, download_name=original_filename) # BURASI DEĞİŞTİ
             except Exception as e:
                 flash(f'Dosya gönderilirken hata oluştu: {e}', 'error')
                 return "Dosya gönderilirken hata oluştu.", 500
