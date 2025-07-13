@@ -4,10 +4,11 @@ import os
 import threading
 import time
 import uuid # Benzersiz ID'ler oluşturmak için
+import base64 # Ortam değişkeninden çerezleri okumak için
 
 app = Flask(__name__)
-# Flash mesajları için gizli anahtar. Üretim ortamında daha karmaşık olmalı.
-app.secret_key = 'supersecretkeyforsecureapp'
+# Flash mesajları için gizli anahtar. Üretim ortamında (Render) FLASK_SECRET_KEY ortam değişkeninden alınmalı.
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'supersecretkeyforsecureapp')
 
 # İndirilen videoların kaydedileceği klasör
 DOWNLOAD_FOLDER = 'downloads'
@@ -18,21 +19,54 @@ if not os.path.exists(DOWNLOAD_FOLDER):
 # Anahtar: session_id, Değer: {'status': 'pending/downloading/completed/failed', 'progress': '%', 'filepath': '...', 'error': '...'}
 download_status = {}
 
-# Çerez dosyasının yolu. Bu dosya GitHub'a ASLA yüklenmemelidir.
-# PythonAnywhere/Render gibi sunucularda, bu dosyayı projenizin kök dizinine manuel olarak yüklemeniz gerekir.
-# Güvenli bir ortam değişkeni kullanmak daha iyidir, ancak basitlik için doğrudan yolu belirtiyoruz.
-# Eğer çerez dosyası yoksa, yt-dlp bot algılamaya takılabilir.
-COOKIES_FILE = os.path.join(os.getcwd(), 'youtube_cookies.txt')
+# Çerez dosyasının adı ve yolu. Bu dosya geçici olarak oluşturulacak ve silinecek.
+COOKIES_FILE_NAME = 'youtube_cookies.txt'
+COOKIES_FILE_PATH = os.path.join(DOWNLOAD_FOLDER, COOKIES_FILE_NAME)
+
+def create_cookies_file_from_env():
+    """
+    Ortam değişkeninden (YOUTUBE_COOKIES) Base64 kodlu çerez içeriğini alıp
+    geçici bir çerez dosyası oluşturur.
+    Bu dosya, yt-dlp tarafından kullanılacak ve işlem sonunda silinecektir.
+    """
+    cookies_base64 = os.environ.get('YOUTUBE_COOKIES')
+    if cookies_base64:
+        try:
+            # Base64 ile kodlanmış çerez içeriğini çöz
+            cookies_content = base64.b64decode(cookies_base64).decode('utf-8')
+            # Geçici çerez dosyasını oluştur
+            with open(COOKIES_FILE_PATH, 'w') as f:
+                f.write(cookies_content)
+            print(f"Çerez dosyası oluşturuldu: {COOKIES_FILE_PATH}")
+            return True # Dosya başarıyla oluşturuldu
+        except Exception as e:
+            print(f"HATA: Çerez dosyası ortam değişkeninden oluşturulurken hata: {e}")
+            return False # Hata oluştu
+    print("UYARI: YOUTUBE_COOKIES ortam değişkeni bulunamadı veya boş. Çerezler kullanılmayacak.")
+    return False # Ortam değişkeni yok veya boş
 
 def download_video_thread(video_url, session_id):
     """
     Videoyu ayrı bir thread'de indiren fonksiyon.
     İlerleme durumunu download_status sözlüğünde günceller.
     """
+    # Her indirme işlemi başladığında çerez dosyasını yeniden oluşturmayı dene
+    # Bu, Render gibi ephemeral dosya sistemlerinde önemlidir.
+    cookies_successfully_created = create_cookies_file_from_env()
+
     # Dosya adını belirlemeden önce videonun bilgilerini çek
     try:
         # download=False ile sadece bilgiyi çek, indirme yapma
-        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:
+        # Bilgi çekme sırasında da çerezleri kullanmayı dene
+        ydl_info_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'noplaylist': True,
+        }
+        if cookies_successfully_created:
+            ydl_info_opts['cookiefile'] = COOKIES_FILE_PATH
+
+        with yt_dlp.YoutubeDL(ydl_info_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             title = info.get('title', 'video')
             # Geçersiz dosya adı karakterlerini temizle
@@ -47,9 +81,13 @@ def download_video_thread(video_url, session_id):
     except Exception as e:
         download_status[session_id] = {'status': 'failed', 'error': f'URL bilgisi alınırken hata: {e}'}
         print(f"URL bilgisi alınırken hata: {e}")
+        # Hata oluştuğunda geçici çerez dosyasını temizle
+        if os.path.exists(COOKIES_FILE_PATH):
+            os.remove(COOKIES_FILE_PATH)
+            print(f"Hata sonrası geçici çerez dosyası silindi: {COOKIES_FILE_PATH}")
         return
 
-    # yt-dlp seçenekleri
+    # yt-dlp indirme seçenekleri
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', # MP4 formatını tercih et
         'outtmpl': filepath, # İndirilen dosyanın yolu ve adı
@@ -61,12 +99,12 @@ def download_video_thread(video_url, session_id):
         'socket_timeout': 10, # Soket zaman aşımı 10 saniye
     }
 
-    # Çerez dosyası mevcutsa ydl_opts'a ekle
-    if os.path.exists(COOKIES_FILE):
-        ydl_opts['cookiefile'] = COOKIES_FILE
-        print(f"Çerez dosyası kullanılıyor: {COOKIES_FILE}")
+    # Çerez dosyası başarıyla oluşturulduysa ydl_opts'a ekle
+    if cookies_successfully_created:
+        ydl_opts['cookiefile'] = COOKIES_FILE_PATH
+        print(f"Çerez dosyası kullanılıyor: {COOKIES_FILE_PATH}")
     else:
-        print(f"UYARI: Çerez dosyası bulunamadı: {COOKIES_FILE}. Çerezsiz denenecek, bu bot algılamaya yol açabilir.")
+        print(f"UYARI: Çerez dosyası oluşturulamadı veya ortam değişkeni yok. Çerezsiz denenecek, bu bot algılamaya yol açabilir.")
 
     try:
         # İndirme işlemini başlat
@@ -82,9 +120,12 @@ def download_video_thread(video_url, session_id):
         download_status[session_id] = {'status': 'failed', 'error': f'Video indirilirken hata oluştu: {e}'}
         print(f"Video indirilirken hata oluştu: {e}")
     finally:
-        # İndirme tamamlandığında veya hata oluştuğunda geçici dosyaları temizle
-        # Bu kısım yt-dlp tarafından otomatik yapılır, ancak ek temizlik gerekebilir
-        pass
+        # İndirme tamamlandığında veya hata oluştuğunda geçici çerez dosyasını sil
+        # Bu, özellikle Render gibi ephemeral dosya sistemlerinde önemlidir
+        if os.path.exists(COOKIES_FILE_PATH):
+            os.remove(COOKIES_FILE_PATH)
+            print(f"Geçici çerez dosyası silindi: {COOKIES_FILE_PATH}")
+
 
 def update_progress(d, session_id):
     """
