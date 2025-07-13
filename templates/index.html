@@ -27,14 +27,14 @@
         </form>
 
         <div id="status-display">
-            <!-- İndirme durumu buraya gelecek -->
+            <!-- İndirme durumu ve linki buraya gelecek -->
             {% if session_id %}
                 <p>İndirme başlatıldı. Durum takip ediliyor...</p>
                 <div id="progress-bar-container">
                     <div id="progress-bar"></div>
                 </div>
                 <p id="progress-text">0%</p>
-                <p id="download-message"></p> {# Otomatik indirme mesajı için yeni p etiketi #}
+                <p id="download-link-container"></p> {# İndirme linki için p etiketi #}
                 <p id="error-message" class="error-text"></p>
                 <script>
                     // Flask'tan gelen session_id'yi JavaScript'e aktar
@@ -55,7 +55,7 @@
             const progressBarContainer = document.getElementById('progress-bar-container');
             const progressBar = document.getElementById('progress-bar');
             const progressText = document.getElementById('progress-text');
-            const downloadMessage = document.getElementById('download-message'); // Yeni eklendi
+            const downloadLinkContainer = document.getElementById('download-link-container'); // Geri getirildi
             const errorMessage = document.getElementById('error-message');
 
             let pollInterval;
@@ -79,15 +79,19 @@
                             clearInterval(pollInterval); // Sorgulamayı durdur
                             progressBarContainer.style.display = 'none';
                             progressText.style.display = 'none';
-                            statusDisplay.innerHTML = '<p>Video hazır! İndirme otomatik olarak başlatılıyor...</p>';
-                            downloadMessage.textContent = `İndirme başlatıldı: ${data.original_filename || 'video.mp4'}`; // Mesajı güncelle
-                            downloadMessage.style.display = 'block'; // Mesajı göster
+                            statusDisplay.innerHTML = '<p>Video hazır! Oynatmak/İndirmek için tıklayın:</p>'; // Mesaj değişti
+                            
+                            // Düğmeyi tekrar oluştur
+                            downloadLinkContainer.innerHTML = `<a href="${data.download_link}" class="download-button" target="_blank">Videoyu Oynat/İndir (${data.original_filename || 'video.mp4'})</a>`;
+                            downloadLinkContainer.style.display = 'block'; // Görünür yap
+                            
                             errorMessage.textContent = ''; // Hata mesajını temizle
+                            
+                            // Otomatik indirme satırı kaldırıldı:
+                            // if (data.download_link) {
+                            //     window.location.href = data.download_link;
+                            // }
 
-                            // Otomatik indirmeyi başlat
-                            if (data.download_link) {
-                                window.location.href = data.download_link;
-                            }
                         } else if (data.status === 'failed') {
                             // İndirme başarısız oldu
                             clearInterval(pollInterval); // Sorgulamayı durdur
@@ -96,7 +100,8 @@
                             statusDisplay.innerHTML = '<p>İndirme başarısız oldu.</p>';
                             errorMessage.textContent = `Hata: ${data.error}`;
                             errorMessage.style.display = 'block';
-                            downloadMessage.style.display = 'none'; // Mesajı gizle
+                            downloadLinkContainer.innerHTML = ''; // İndirme linkini temizle
+                            downloadLinkContainer.style.display = 'none'; // Gizle
                         } else if (data.status === 'not_found') {
                             // İndirme bulunamadı (belki session ID yanlış veya süre doldu)
                             clearInterval(pollInterval);
@@ -105,7 +110,8 @@
                             errorMessage.style.display = 'block';
                             progressBarContainer.style.display = 'none';
                             progressText.style.display = 'none';
-                            downloadMessage.style.display = 'none'; // Mesajı gizle
+                            downloadLinkContainer.innerHTML = '';
+                            downloadLinkContainer.style.display = 'none'; // Gizle
                         }
                     })
                     .catch(error => {
@@ -116,7 +122,8 @@
                         errorMessage.style.display = 'block';
                         progressBarContainer.style.display = 'none';
                         progressText.style.display = 'none';
-                        downloadMessage.style.display = 'none'; // Mesajı gizle
+                        downloadLinkContainer.innerHTML = '';
+                        downloadLinkContainer.style.display = 'none'; // Gizle
                     });
             }
 
