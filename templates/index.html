@@ -23,21 +23,21 @@
         <form action="/download" method="post">
             <label for="video_url">Video URL:</label>
             <input type="text" id="video_url" name="video_url" placeholder="Video URL'sini buraya yapıştırın" required>
-            <button type="submit">İndirmeyi Başlat</button>
+            <button type="submit">Bilgi Çek</button> {# Buton metni değişti #}
         </form>
 
         <div id="status-display">
-            <!-- İndirme durumu ve linki buraya gelecek -->
+            <!-- İşlem durumu, ilerleme veya format seçenekleri buraya gelecek -->
             {% if session_id %}
-                <p>İndirme başlatıldı. Durum takip ediliyor...</p>
+                <p>İşlem başlatıldı. Durum takip ediliyor...</p>
                 <div id="progress-bar-container">
                     <div id="progress-bar"></div>
                 </div>
                 <p id="progress-text">0%</p>
-                <p id="download-link-container"></p> {# İndirme linki için p etiketi #}
-                <p id="error-message" class="error-text"></p>
+                <p id="format-selection-message" style="display:none;"></p>
+                <div id="format-buttons-container" style="display:none;"></div>
+                <p id="error-message" class="error-text" style="display:none;"></p>
                 <script>
-                    // Flask'tan gelen session_id'yi JavaScript'e aktar
                     const currentSessionId = "{{ session_id }}";
                 </script>
             {% endif %}
@@ -49,13 +49,13 @@
     </footer>
 
     <script>
-        // JavaScript sadece session_id varsa çalışacak
         if (typeof currentSessionId !== 'undefined' && currentSessionId !== '') {
             const statusDisplay = document.getElementById('status-display');
             const progressBarContainer = document.getElementById('progress-bar-container');
             const progressBar = document.getElementById('progress-bar');
             const progressText = document.getElementById('progress-text');
-            const downloadLinkContainer = document.getElementById('download-link-container'); // Geri getirildi
+            const formatSelectionMessage = document.getElementById('format-selection-message');
+            const formatButtonsContainer = document.getElementById('format-buttons-container');
             const errorMessage = document.getElementById('error-message');
 
             let pollInterval;
@@ -65,53 +65,52 @@
                     .then(response => response.json())
                     .then(data => {
                         console.log('Durum verisi:', data);
-                        if (data.status === 'pending' || data.status === 'downloading' || data.status === 'processing') {
-                            // İndirme devam ediyor veya işleniyor
+                        // Tüm durum göstergelerini gizle
+                        progressBarContainer.style.display = 'none';
+                        progressText.style.display = 'none';
+                        formatSelectionMessage.style.display = 'none';
+                        formatButtonsContainer.style.display = 'none';
+                        errorMessage.style.display = 'none';
+
+                        if (data.status === 'pending' || data.status === 'extracting_info') {
+                            // Bilgi çekiliyor
+                            statusDisplay.innerHTML = `<p>İşlem durumu: ${data.status.charAt(0).toUpperCase() + data.status.slice(1)}...</p>`;
+                            // İlerleme çubuğunu bilgi çekme için de gösterebiliriz (opsiyonel)
                             progressBarContainer.style.display = 'block';
                             progressBar.style.width = data.progress || '0%';
                             progressText.textContent = data.progress || '0%';
-                            statusDisplay.innerHTML = `<p>İndirme durumu: ${data.status.charAt(0).toUpperCase() + data.status.slice(1)}...</p>`;
-                            if (data.progress) {
-                                statusDisplay.innerHTML += `<p>İlerleme: ${data.progress}</p>`;
-                            }
-                        } else if (data.status === 'completed') {
-                            // İndirme tamamlandı
+                            progressText.style.display = 'block';
+                        } else if (data.status === 'formats_available') {
+                            // Formatlar hazır, kullanıcıya seçenekleri göster
                             clearInterval(pollInterval); // Sorgulamayı durdur
-                            progressBarContainer.style.display = 'none';
-                            progressText.style.display = 'none';
-                            statusDisplay.innerHTML = '<p>Video hazır! Oynatmak/İndirmek için tıklayın:</p>'; // Mesaj değişti
-                            
-                            // Düğmeyi tekrar oluştur
-                            downloadLinkContainer.innerHTML = `<a href="${data.download_link}" class="download-button" target="_blank">Videoyu Oynat/İndir (${data.original_filename || 'video.mp4'})</a>`;
-                            downloadLinkContainer.style.display = 'block'; // Görünür yap
-                            
-                            errorMessage.textContent = ''; // Hata mesajını temizle
-                            
-                            // Otomatik indirme satırı kaldırıldı:
-                            // if (data.download_link) {
-                            //     window.location.href = data.download_link;
-                            // }
+                            statusDisplay.innerHTML = `<p>Video: <strong>${data.title}</strong></p><p>İndirmek istediğiniz kaliteye tıklayın:</p>`;
+                            formatSelectionMessage.style.display = 'block';
+                            formatButtonsContainer.style.display = 'flex'; // Düğmeleri yan yana sırala
+                            formatButtonsContainer.style.flexWrap = 'wrap'; // Gerekirse alt satıra geç
+                            formatButtonsContainer.style.gap = '10px'; // Düğmeler arası boşluk
+                            formatButtonsContainer.innerHTML = ''; // Önceki düğmeleri temizle
 
+                            data.available_formats.forEach(format => {
+                                const button = document.createElement('a'); // A etiketi olarak düğme
+                                button.className = 'format-button';
+                                button.textContent = `${format.quality} (${format.extension}, ${format.filesize_mb}MB)`;
+                                button.href = format.direct_url; // Doğrudan URL'ye link ver
+                                button.target = "_blank"; // Yeni sekmede aç
+                                button.download = `${data.title}.${format.extension}`; // Dosya adını belirt (tarayıcı desteklerse)
+                                formatButtonsContainer.appendChild(button);
+                            });
                         } else if (data.status === 'failed') {
-                            // İndirme başarısız oldu
+                            // İşlem başarısız oldu
                             clearInterval(pollInterval); // Sorgulamayı durdur
-                            progressBarContainer.style.display = 'none';
-                            progressText.style.display = 'none';
-                            statusDisplay.innerHTML = '<p>İndirme başarısız oldu.</p>';
+                            statusDisplay.innerHTML = '<p>İşlem başarısız oldu.</p>';
                             errorMessage.textContent = `Hata: ${data.error}`;
                             errorMessage.style.display = 'block';
-                            downloadLinkContainer.innerHTML = ''; // İndirme linkini temizle
-                            downloadLinkContainer.style.display = 'none'; // Gizle
                         } else if (data.status === 'not_found') {
-                            // İndirme bulunamadı (belki session ID yanlış veya süre doldu)
+                            // İşlem bulunamadı
                             clearInterval(pollInterval);
-                            statusDisplay.innerHTML = '<p>İndirme durumu bulunamadı veya süresi doldu.</p>';
+                            statusDisplay.innerHTML = '<p>İşlem durumu bulunamadı veya süresi doldu.</p>';
                             errorMessage.textContent = data.error;
                             errorMessage.style.display = 'block';
-                            progressBarContainer.style.display = 'none';
-                            progressText.style.display = 'none';
-                            downloadLinkContainer.innerHTML = '';
-                            downloadLinkContainer.style.display = 'none'; // Gizle
                         }
                     })
                     .catch(error => {
@@ -120,16 +119,12 @@
                         statusDisplay.innerHTML = '<p>Durum sorgulanırken bir hata oluştu.</p>';
                         errorMessage.textContent = `Ağ Hatası: ${error.message}`;
                         errorMessage.style.display = 'block';
-                        progressBarContainer.style.display = 'none';
-                        progressText.style.display = 'none';
-                        downloadLinkContainer.innerHTML = '';
-                        downloadLinkContainer.style.display = 'none'; // Gizle
                     });
             }
 
             // Sayfa yüklendiğinde ve her 3 saniyede bir durumu sorgula
-            pollInterval = setInterval(checkDownloadStatus, 3000); // Her 3 saniyede bir sorgula
-            checkDownloadStatus(); // Sayfa yüklendiğinde ilk sorgulamayı yap
+            pollInterval = setInterval(checkDownloadStatus, 3000);
+            checkDownloadStatus();
         }
     </script>
 </body>
