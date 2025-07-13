@@ -27,14 +27,14 @@
         </form>
 
         <div id="status-display">
-            <!-- İndirme durumu ve linki buraya gelecek -->
+            <!-- İndirme durumu buraya gelecek -->
             {% if session_id %}
                 <p>İndirme başlatıldı. Durum takip ediliyor...</p>
                 <div id="progress-bar-container">
                     <div id="progress-bar"></div>
                 </div>
                 <p id="progress-text">0%</p>
-                <p id="download-link-container"></p>
+                <p id="download-message"></p> {# Otomatik indirme mesajı için yeni p etiketi #}
                 <p id="error-message" class="error-text"></p>
                 <script>
                     // Flask'tan gelen session_id'yi JavaScript'e aktar
@@ -45,7 +45,7 @@
     </div>
 
     <footer>
-        <p>&copy; 2025 Hüseyin Uygur | <a href="https://github.com/huseyinuygur/video-indirici" target="_blank">Kaynak Kodu</a></p>
+        <p>&copy; 2025 Hüseyin Uygur | <a href="https://github.com/huseyinuygur/video_indirici" target="_blank">Kaynak Kodu</a></p>
     </footer>
 
     <script>
@@ -55,7 +55,7 @@
             const progressBarContainer = document.getElementById('progress-bar-container');
             const progressBar = document.getElementById('progress-bar');
             const progressText = document.getElementById('progress-text');
-            const downloadLinkContainer = document.getElementById('download-link-container');
+            const downloadMessage = document.getElementById('download-message'); // Yeni eklendi
             const errorMessage = document.getElementById('error-message');
 
             let pollInterval;
@@ -79,10 +79,15 @@
                             clearInterval(pollInterval); // Sorgulamayı durdur
                             progressBarContainer.style.display = 'none';
                             progressText.style.display = 'none';
-                            statusDisplay.innerHTML = '<p>Video hazır! İndirmek için tıklayın:</p>';
-                            downloadLinkContainer.innerHTML = `<a href="${data.download_link}" class="download-button" target="_blank">Videoyu İndir (${data.original_filename || 'video.mp4'})</a>`;
-                            downloadLinkContainer.style.display = 'block';
+                            statusDisplay.innerHTML = '<p>Video hazır! İndirme otomatik olarak başlatılıyor...</p>';
+                            downloadMessage.textContent = `İndirme başlatıldı: ${data.original_filename || 'video.mp4'}`; // Mesajı güncelle
+                            downloadMessage.style.display = 'block'; // Mesajı göster
                             errorMessage.textContent = ''; // Hata mesajını temizle
+
+                            // Otomatik indirmeyi başlat
+                            if (data.download_link) {
+                                window.location.href = data.download_link;
+                            }
                         } else if (data.status === 'failed') {
                             // İndirme başarısız oldu
                             clearInterval(pollInterval); // Sorgulamayı durdur
@@ -91,7 +96,7 @@
                             statusDisplay.innerHTML = '<p>İndirme başarısız oldu.</p>';
                             errorMessage.textContent = `Hata: ${data.error}`;
                             errorMessage.style.display = 'block';
-                            downloadLinkContainer.innerHTML = ''; // İndirme linkini temizle
+                            downloadMessage.style.display = 'none'; // Mesajı gizle
                         } else if (data.status === 'not_found') {
                             // İndirme bulunamadı (belki session ID yanlış veya süre doldu)
                             clearInterval(pollInterval);
@@ -100,7 +105,7 @@
                             errorMessage.style.display = 'block';
                             progressBarContainer.style.display = 'none';
                             progressText.style.display = 'none';
-                            downloadLinkContainer.innerHTML = '';
+                            downloadMessage.style.display = 'none'; // Mesajı gizle
                         }
                     })
                     .catch(error => {
@@ -111,7 +116,7 @@
                         errorMessage.style.display = 'block';
                         progressBarContainer.style.display = 'none';
                         progressText.style.display = 'none';
-                        downloadLinkContainer.innerHTML = '';
+                        downloadMessage.style.display = 'none'; // Mesajı gizle
                     });
             }
 
