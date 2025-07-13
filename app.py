@@ -71,8 +71,8 @@ def extract_and_process_video_info(video_url, session_id):
             info = ydl.extract_info(video_url, download=False) # download=False ile sadece bilgi çek
             
             # Videonun başlığını al
-            title = info.get('title', 'video')
-            title = "".join([c for c c in title if c.isalnum() or c in (' ', '.', '_', '-')]).rstrip()
+            # HATA DÜZELTİLDİ: 'for c c in title' yerine 'for c in title' olmalıydı.
+            title = "".join([c for c in title if c.isalnum() or c in (' ', '.', '_', '-')]).rstrip()
             
             # Kullanılabilir formatları ayıkla
             available_formats = []
