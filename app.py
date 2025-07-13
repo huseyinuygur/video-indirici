@@ -10,18 +10,22 @@ app = Flask(__name__)
 # Flash mesajları için gizli anahtar. Üretim ortamında (Render) FLASK_SECRET_KEY ortam değişkeninden alınmalı.
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'supersecretkeyforsecureapp')
 
-# İndirilen videoların kaydedileceği klasör
-DOWNLOAD_FOLDER = 'downloads'
-if not os.path.exists(DOWNLOAD_FOLDER):
-    os.makedirs(DOWNLOAD_FOLDER)
+# İndirilen videoların kaydedileceği klasör - ARTIK SUNUCUYA İNDİRMEYECEĞİZ, SADECE GEÇİCİ ÇEREZ İÇİN KULLANILACAK
+# Bu klasörü sadece çerez dosyasını geçici olarak yazmak için kullanabiliriz, veya /tmp kullanabiliriz.
+# Daha basit olması için COOKIES_FILE_PATH'i /tmp'ye yönlendirelim.
+# DOWNLOAD_FOLDER = 'downloads'
+# if not os.path.exists(DOWNLOAD_FOLDER):
+#     os.makedirs(DOWNLOAD_FOLDER) # Bu satırlar artık gerekli değil
 
 # İndirme durumunu takip etmek için bir sözlük.
-# Anahtar: session_id, Değer: {'status': 'pending/downloading/completed/failed', 'progress': '%', 'filepath': '...', 'error': '...'}
+# Anahtar: session_id, Değer: {'status': 'pending/extracting_info/formats_available/failed', ...}
+# formats_available durumunda 'available_formats': [{'format_id': '...', 'quality': '...', 'filesize': '...', 'direct_url': '...'}]
 download_status = {}
 
 # Çerez dosyasının adı ve yolu. Bu dosya geçici olarak oluşturulacak ve silinecek.
+# /tmp dizini, çoğu Linux tabanlı sistemde geçici dosyalar için kullanılır ve otomatik temizlenir.
 COOKIES_FILE_NAME = 'youtube_cookies.txt'
-COOKIES_FILE_PATH = os.path.join(DOWNLOAD_FOLDER, COOKIES_FILE_NAME)
+COOKIES_FILE_PATH = os.path.join('/tmp', COOKIES_FILE_NAME) # Çerez dosyasını /tmp'ye yazıyoruz
 
 def create_cookies_file_from_env():
     """
@@ -32,115 +36,100 @@ def create_cookies_file_from_env():
     cookies_base64 = os.environ.get('YOUTUBE_COOKIES')
     if cookies_base64:
         try:
-            # Base64 ile kodlanmış çerez içeriğini çöz
             cookies_content = base64.b64decode(cookies_base64).decode('utf-8')
-            # Geçici çerez dosyasını oluştur
             with open(COOKIES_FILE_PATH, 'w') as f:
                 f.write(cookies_content)
             print(f"Çerez dosyası oluşturuldu: {COOKIES_FILE_PATH}")
-            return True # Dosya başarıyla oluşturuldu
+            return True
         except Exception as e:
             print(f"HATA: Çerez dosyası ortam değişkeninden oluşturulurken hata: {e}")
-            return False # Hata oluştu
+            return False
     print("UYARI: YOUTUBE_COOKIES ortam değişkeni bulunamadı veya boş. Çerezler kullanılmayacak.")
-    return False # Ortam değişkeni yok veya boş
+    return False
 
-def download_video_thread(video_url, session_id):
+def extract_and_process_video_info(video_url, session_id):
     """
-    Videoyu ayrı bir thread'de indiren fonksiyon.
-    İlerleme durumunu download_status sözlüğünde günceller.
+    Videodan bilgiyi çeker ve formatları ayıklar.
+    İndirme durumunu günceller.
     """
-    # Her indirme işlemi başladığında çerez dosyasını yeniden oluşturmayı dene
-    # Bu, Render gibi ephemeral dosya sistemlerinde önemlidir.
+    download_status[session_id] = {'status': 'extracting_info', 'progress': '0%'}
     cookies_successfully_created = create_cookies_file_from_env()
 
-    # Dosya adını belirlemeden önce videonun bilgilerini çek
     try:
-        # download=False ile sadece bilgiyi çek, indirme yapma
-        # Bilgi çekme sırasında da çerezleri kullanmayı dene
         ydl_info_opts = {
             'quiet': True,
             'no_warnings': True,
             'noplaylist': True,
+            'skip_download': True, # Sadece bilgi çek, indirme yapma
+            'retries': 3,
+            'socket_timeout': 10,
         }
         if cookies_successfully_created:
             ydl_info_opts['cookiefile'] = COOKIES_FILE_PATH
 
         with yt_dlp.YoutubeDL(ydl_info_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            title = info.get('title', 'video')
-            # Geçersiz dosya adı karakterlerini temizle
-            title = "".join([c for c in title if c.isalnum() or c in (' ', '.', '_', '-')]).rstrip()
-            original_filename = f"{title}.mp4" # Varsayılan MP4 formatı
+            info = ydl.extract_info(video_url, download=False) # download=False ile sadece bilgi çek
             
-            # Dosya adı çakışmasını önlemek için benzersiz bir isim oluştur
-            # Bu, aynı videonun birden fazla kez indirilmesini sağlar
-            unique_filename = f"{uuid.uuid4()}_{original_filename}"
-            filepath = os.path.join(DOWNLOAD_FOLDER, unique_filename)
+            # Videonun başlığını al
+            title = info.get('title', 'video')
+            title = "".join([c for c c in title if c.isalnum() or c in (' ', '.', '_', '-')]).rstrip()
+            
+            # Kullanılabilir formatları ayıkla
+            available_formats = []
+            if 'formats' in info:
+                for f in info['formats']:
+                    # Sadece video veya video+ses formatlarını al (ses formatlarını hariç tut)
+                    # ve doğrudan bir URL'si olanları al
+                    if f.get('url') and (f.get('vcodec') != 'none' or (f.get('vcodec') != 'none' and f.get('acodec') != 'none')):
+                        quality = f.get('format_note') or f.get('format') or f.get('resolution') or 'Unknown Quality'
+                        filesize = f.get('filesize') or f.get('filesize_approx') # Byte cinsinden
+                        filesize_mb = round(filesize / (1024 * 1024), 2) if filesize else 'N/A' # MB cinsine çevir
+                        
+                        available_formats.append({
+                            'format_id': f.get('format_id'),
+                            'quality': quality,
+                            'extension': f.get('ext'),
+                            'filesize_mb': filesize_mb,
+                            'direct_url': f.get('url') # Bu ARTIK DOĞRUDAN İNDİRME URL'Sİ
+                        })
+                # Kaliteye göre sırala (örneğin daha yüksek çözünürlük/bitrate önce gelsin)
+                available_formats.sort(key=lambda x: x.get('filesize_mb', 0) if isinstance(x.get('filesize_mb'), (int, float)) else 0, reverse=True)
+            
+            if available_formats:
+                download_status[session_id] = {
+                    'status': 'formats_available',
+                    'title': title,
+                    'available_formats': available_formats
+                }
+                print(f"Formatlar başarıyla çekildi ({session_id}): {title}")
+            else:
+                download_status[session_id] = {'status': 'failed', 'error': 'Video formatları bulunamadı veya doğrudan indirme URL\'leri mevcut değil.'}
+                print(f"Video formatları bulunamadı ({session_id}).")
 
     except Exception as e:
-        download_status[session_id] = {'status': 'failed', 'error': f'URL bilgisi alınırken hata: {e}'}
-        print(f"URL bilgisi alınırken hata: {e}")
-        # Hata oluştuğunda geçici çerez dosyasını temizle
-        if os.path.exists(COOKIES_FILE_PATH):
-            os.remove(COOKIES_FILE_PATH)
-            print(f"Hata sonrası geçici çerez dosyası silindi: {COOKIES_FILE_PATH}")
-        return
-
-    # yt-dlp indirme seçenekleri
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', # MP4 formatını tercih et
-        'outtmpl': filepath, # İndirilen dosyanın yolu ve adı
-        'progress_hooks': [lambda d: update_progress(d, session_id)], # İlerleme takibi için hook
-        'noplaylist': True, # Sadece tek videoyu indir, oynatma listesini değil
-        'nocheckcertificate': True, # SSL sertifikası hatalarını göz ardı et (nadiren gerekebilir)
-        'retries': 3, # Ağ hatalarında 3 kez tekrar dene
-        'fragment_retries': 3, # Parça indirme hatalarında 3 kez tekrar dene
-        'socket_timeout': 10, # Soket zaman aşımı 10 saniye
-    }
-
-    # Çerez dosyası başarıyla oluşturulduysa ydl_opts'a ekle
-    if cookies_successfully_created:
-        ydl_opts['cookiefile'] = COOKIES_FILE_PATH
-        print(f"Çerez dosyası kullanılıyor: {COOKIES_FILE_PATH}")
-    else:
-        print(f"UYARI: Çerez dosyası oluşturulamadı veya ortam değişkeni yok. Çerezsiz denenecek, bu bot algılamaya yol açabilir.")
-
-    try:
-        # İndirme işlemini başlat
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url]) # Videoyu indir
-        
-        # İndirme tamamlandıktan sonra durumu güncelle
-        download_status[session_id] = {'status': 'completed', 'filepath': filepath, 'original_filename': original_filename}
-        print(f"Video başarıyla indirildi: {filepath}")
-
-    except Exception as e:
-        # Hata durumunda durumu güncelle
-        download_status[session_id] = {'status': 'failed', 'error': f'Video indirilirken hata oluştu: {e}'}
-        print(f"Video indirilirken hata oluştu: {e}")
+        download_status[session_id] = {'status': 'failed', 'error': f'Video bilgisi çekilirken hata: {e}'}
+        print(f"Video bilgisi çekilirken hata: {e}")
     finally:
-        # İndirme tamamlandığında veya hata oluştuğunda geçici çerez dosyasını sil
-        # Bu, özellikle Render gibi ephemeral dosya sistemlerinde önemlidir
+        # Hata oluştuğunda veya işlem bittiğinde geçici çerez dosyasını sil
         if os.path.exists(COOKIES_FILE_PATH):
             os.remove(COOKIES_FILE_PATH)
             print(f"Geçici çerez dosyası silindi: {COOKIES_FILE_PATH}")
 
+# Bu fonksiyon artık kullanılmayacak, çünkü sunucu indirme yapmıyor.
+# def download_specific_format_thread(...)
 
 def update_progress(d, session_id):
     """
-    yt-dlp'den gelen ilerleme bilgilerini download_status sözlüğünde günceller.
+    Bu fonksiyon artık doğrudan indirme yapmadığımız için kullanılmayacak,
+    ancak yt-dlp'nin bilgi çekme aşamasındaki ilerlemesi için tutulabilir.
     """
-    if d['status'] == 'downloading':
+    if d['status'] == 'downloading': # Bu durum artık oluşmayacak
         p = d.get('_percent_str', 'N/A')
-        download_status[session_id] = {'status': 'downloading', 'progress': p}
-        # print(f"İndiriliyor ({session_id}): {p}")
-    elif d['status'] == 'finished':
-        download_status[session_id] = {'status': 'processing', 'progress': '100%'}
-        # print(f"İndirme tamamlandı, işleniyor ({session_id})...")
+        download_status[session_id] = {'status': 'extracting_info', 'progress': p}
+    elif d['status'] == 'finished': # Bu durum artık oluşmayacak
+        download_status[session_id] = {'status': 'extracting_info', 'progress': '100%'}
     elif d['status'] == 'error':
         download_status[session_id] = {'status': 'failed', 'error': d.get('error', 'Bilinmeyen hata.')}
-        # print(f"İndirme hatası ({session_id}): {d.get('error', 'Bilinmeyen hata.')}")
 
 @app.route('/')
 def index():
@@ -150,78 +139,45 @@ def index():
 @app.route('/download', methods=['POST'])
 def initiate_download():
     """
-    Video indirme işlemini başlatan endpoint.
-    Kullanıcıyı doğrudan indirmeye yönlendirmez, bir session ID ile durumu takip etmesini sağlar.
+    Video bilgisi çekme işlemini başlatan endpoint.
     """
     video_url = request.form['video_url']
     if not video_url:
         flash('Lütfen bir video URL\'si girin!', 'error')
         return render_template('index.html')
 
-    # Benzersiz bir oturum ID'si oluştur
     session_id = str(uuid.uuid4())
     download_status[session_id] = {'status': 'pending', 'progress': '0%'}
 
-    # İndirme işlemini ayrı bir thread'de başlat
-    thread = threading.Thread(target=download_video_thread, args=(video_url, session_id))
+    # Bilgi çekme işlemini ayrı bir thread'de başlat
+    thread = threading.Thread(target=extract_and_process_video_info, args=(video_url, session_id))
     thread.start()
 
-    flash(f'Video indirme işlemi başlatıldı! Durumu takip ediliyor. Lütfen bekleyin.', 'info')
-    # Kullanıcıyı ana sayfaya yönlendir ve JavaScript ile durumu sorgulaması için session_id'yi gönder
+    flash(f'Video bilgisi çekiliyor! Lütfen bekleyin.', 'info')
     return render_template('index.html', session_id=session_id)
 
 @app.route('/status/<session_id>')
 def get_download_status(session_id):
     """
     Belirli bir indirme işleminin mevcut durumunu JSON olarak döndürür.
-    Frontend bu endpoint'i düzenli olarak sorgulayacak.
     """
-    status_info = download_status.get(session_id, {'status': 'not_found', 'error': 'İndirme bulunamadı.'})
+    status_info = download_status.get(session_id, {'status': 'not_found', 'error': 'İşlem bulunamadı.'})
     
-    # Eğer indirme tamamlandıysa, indirme linkini de ekle
-    if status_info['status'] == 'completed':
-        # Flask'ın url_for fonksiyonu ile dinamik link oluştur
-        download_link = url_for('serve_downloaded_file', session_id=session_id)
-        status_info['download_link'] = download_link
+    # 'completed' durumu artık doğrudan dosya indirme anlamına gelmiyor,
+    # formatlar çekildiğinde 'formats_available' olacak.
+    # Bu endpoint sadece durumu bildirecek.
     
     return jsonify(status_info)
 
-@app.route('/download_file/<session_id>')
-def serve_downloaded_file(session_id):
-    """
-    İndirme tamamlandığında dosyayı kullanıcıya sunan endpoint.
-    Dosya sunulduktan sonra sunucudan silinir (geçici depolama için).
-    """
-    status_info = download_status.get(session_id)
+# Bu endpoint artık kullanılmayacak, çünkü sunucu dosya sunmuyor.
+# @app.route('/download_selected_format', methods=['POST'])
+# def download_selected_format():
+#     ...
 
-    if status_info and status_info['status'] == 'completed' and 'filepath' in status_info:
-        filepath = status_info['filepath']
-        original_filename = status_info.get('original_filename', 'video.mp4')
-
-        if os.path.exists(filepath):
-            try:
-                # Dosyayı tarayıcıya video içeriği olarak gönder (indirme başlatmaz)
-                return send_file(filepath, as_attachment=False, download_name=original_filename) # BURASI DEĞİŞTİ
-            except Exception as e:
-                flash(f'Dosya gönderilirken hata oluştu: {e}', 'error')
-                return "Dosya gönderilirken hata oluştu.", 500
-            finally:
-                # Dosya gönderildikten sonra sunucudan sil (geçici depolama)
-                # Bu, özellikle Render gibi ephemeral dosya sistemlerinde önemlidir
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-                    print(f"Dosya sunucudan silindi: {filepath}")
-                # İndirme durumunu sözlükten kaldır
-                if session_id in download_status:
-                    del download_status[session_id]
-        else:
-            flash('Dosya bulunamadı veya zaten silindi.', 'error')
-            return "Dosya bulunamadı veya zaten silindi.", 404
-    else:
-        flash('Dosya henüz hazır değil veya bir hata oluştu.', 'error')
-        return "Dosya henüz hazır değil veya bir hata oluştu.", 404
+# Bu endpoint artık kullanılmayacak, çünkü sunucu dosya sunmuyor.
+# @app.route('/download_file/<session_id>')
+# def serve_downloaded_file(session_id):
+#     ...
 
 if __name__ == '__main__':
-    # Yerelde test ederken host='0.0.0.0' ile mobil cihazlardan erişimi açabilirsiniz
-    # Üretim ortamında (Render/PythonAnywhere) bu ayarlar WSGI sunucusu tarafından yönetilir.
     app.run(debug=True, host='0.0.0.0', port=5000)
