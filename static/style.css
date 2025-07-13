@@ -144,7 +144,29 @@ button[type="submit"]:hover {
     color: #34495e;
 }
 
-/* #download-link-container ve .download-button stilleri kaldırıldı */
+#download-link-container {
+    margin-top: 20px;
+    display: none; /* Başlangıçta gizli */
+}
+
+.download-button {
+    display: inline-block;
+    background-color: #2ecc71; /* Yeşil indirme düğmesi */
+    color: white;
+    padding: 12px 25px;
+    border: none;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 1.1em;
+    font-weight: 600;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+    box-shadow: 0 4px 10px rgba(46, 204, 113, 0.3);
+}
+
+.download-button:hover {
+    background-color: #27ae60;
+    transform: translateY(-2px);
+}
 
 .error-text {
     color: #e74c3c; /* Hata mesajları için kırmızı */
