@@ -27,13 +27,98 @@
         </form>
 
         <div id="status-display">
-            </div>
+            <!-- İndirme durumu ve linki buraya gelecek -->
+            {% if session_id %}
+                <p>İndirme başlatıldı. Durum takip ediliyor...</p>
+                <div id="progress-bar-container">
+                    <div id="progress-bar"></div>
+                </div>
+                <p id="progress-text">0%</p>
+                <p id="download-link-container"></p>
+                <p id="error-message" class="error-text"></p>
+                <script>
+                    // Flask'tan gelen session_id'yi JavaScript'e aktar
+                    const currentSessionId = "{{ session_id }}";
+                </script>
+            {% endif %}
+        </div>
     </div>
 
+    <footer>
+        <p>&copy; 2025 Hüseyin Uygur | <a href="https://github.com/huseyinuygur/video-indirici" target="_blank">Kaynak Kodu</a></p>
+    </footer>
+
     <script>
-        // İndirme durumunu kontrol etmek için basit bir JavaScript fonksiyonu
-        // Bu bölüm, app.py'deki /status/<session_id> endpoint'ini kullanarak indirme durumunu dinamik olarak göstermek için geliştirilebilir.
-        // Şimdilik sadece bilgilendirme mesajları gösterilecek.
+        // JavaScript sadece session_id varsa çalışacak
+        if (typeof currentSessionId !== 'undefined' && currentSessionId !== '') {
+            const statusDisplay = document.getElementById('status-display');
+            const progressBarContainer = document.getElementById('progress-bar-container');
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const downloadLinkContainer = document.getElementById('download-link-container');
+            const errorMessage = document.getElementById('error-message');
+
+            let pollInterval;
+
+            function checkDownloadStatus() {
+                fetch(`/status/${currentSessionId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Durum verisi:', data);
+                        if (data.status === 'pending' || data.status === 'downloading' || data.status === 'processing') {
+                            // İndirme devam ediyor veya işleniyor
+                            progressBarContainer.style.display = 'block';
+                            progressBar.style.width = data.progress || '0%';
+                            progressText.textContent = data.progress || '0%';
+                            statusDisplay.innerHTML = `<p>İndirme durumu: ${data.status.charAt(0).toUpperCase() + data.status.slice(1)}...</p>`;
+                            if (data.progress) {
+                                statusDisplay.innerHTML += `<p>İlerleme: ${data.progress}</p>`;
+                            }
+                        } else if (data.status === 'completed') {
+                            // İndirme tamamlandı
+                            clearInterval(pollInterval); // Sorgulamayı durdur
+                            progressBarContainer.style.display = 'none';
+                            progressText.style.display = 'none';
+                            statusDisplay.innerHTML = '<p>Video hazır! İndirmek için tıklayın:</p>';
+                            downloadLinkContainer.innerHTML = `<a href="${data.download_link}" class="download-button" target="_blank">Videoyu İndir (${data.original_filename || 'video.mp4'})</a>`;
+                            downloadLinkContainer.style.display = 'block';
+                            errorMessage.textContent = ''; // Hata mesajını temizle
+                        } else if (data.status === 'failed') {
+                            // İndirme başarısız oldu
+                            clearInterval(pollInterval); // Sorgulamayı durdur
+                            progressBarContainer.style.display = 'none';
+                            progressText.style.display = 'none';
+                            statusDisplay.innerHTML = '<p>İndirme başarısız oldu.</p>';
+                            errorMessage.textContent = `Hata: ${data.error}`;
+                            errorMessage.style.display = 'block';
+                            downloadLinkContainer.innerHTML = ''; // İndirme linkini temizle
+                        } else if (data.status === 'not_found') {
+                            // İndirme bulunamadı (belki session ID yanlış veya süre doldu)
+                            clearInterval(pollInterval);
+                            statusDisplay.innerHTML = '<p>İndirme durumu bulunamadı veya süresi doldu.</p>';
+                            errorMessage.textContent = data.error;
+                            errorMessage.style.display = 'block';
+                            progressBarContainer.style.display = 'none';
+                            progressText.style.display = 'none';
+                            downloadLinkContainer.innerHTML = '';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Durum sorgulanırken hata:', error);
+                        clearInterval(pollInterval);
+                        statusDisplay.innerHTML = '<p>Durum sorgulanırken bir hata oluştu.</p>';
+                        errorMessage.textContent = `Ağ Hatası: ${error.message}`;
+                        errorMessage.style.display = 'block';
+                        progressBarContainer.style.display = 'none';
+                        progressText.style.display = 'none';
+                        downloadLinkContainer.innerHTML = '';
+                    });
+            }
+
+            // Sayfa yüklendiğinde ve her 3 saniyede bir durumu sorgula
+            pollInterval = setInterval(checkDownloadStatus, 3000); // Her 3 saniyede bir sorgula
+            checkDownloadStatus(); // Sayfa yüklendiğinde ilk sorgulamayı yap
+        }
     </script>
 </body>
 </html>
